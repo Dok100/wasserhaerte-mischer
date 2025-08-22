@@ -1,272 +1,479 @@
 <!doctype html>
 <html lang="de">
-
-<head>
+  <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Wasserhärte-Mischer</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="apple-touch-icon" href="icon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- React 18 UMD + Babel for JSX -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <link rel="apple-touch-icon" href="wasserhaerte.png">
-</head>
-
-<body class="bg-gray-50">
+  </head>
+  <body class="bg-gray-50">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+      const { useState, useEffect, useMemo } = React;
 
-        // ---------- Helpers ----------
-        function parseNum(input) {
-            if (input == null) return NaN;
-            const s = String(input).trim().replace(/\./g, "").replace(",", "."); // 1.234,56 -> 1234.56
-            if (s === "") return NaN;
-            return Number(s);
+      // ===== Helpers =====
+      function parseNum(input) {
+        if (input == null) return NaN;
+        let s = String(input).trim();
+        // 1) deutsches Komma -> Punkt
+        s = s.replace(",", ".");
+        // 2) Tausenderpunkte entfernen, Dezimalpunkt behalten
+        const parts = s.split(".");
+        if (parts.length > 2) {
+          const last = parts.pop();
+          s = parts.join("") + "." + last;
         }
-        function formatNum(n, digits = 2) {
-            if (!isFinite(n)) return "–";
-            return new Intl.NumberFormat("de-DE", { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(n);
-        }
-        function useLocal(key, initial) {
-            const [val, setVal] = useState(() => {
-                try {
-                    const raw = localStorage.getItem(key);
-                    return raw ? JSON.parse(raw) : initial;
-                } catch { return initial; }
-            });
-            useEffect(() => {
-                try { localStorage.setItem(key, JSON.stringify(val)); } catch { }
-            }, [key, val]);
-            return [val, setVal];
-        }
+        if (s === "") return NaN;
+        const n = Number(s);
+        return Number.isFinite(n) ? n : NaN;
+      }
 
-        // ---------- App ----------
-        function App() {
-            // Persisted inputs (Mischrechner)
-            const [lwHard, setLwHard] = useLocal("lwHardness", "16,6"); // °dH
-            const [mwHard, setMwHard] = useLocal("mwHardness", "0,8");  // °dH
-            const [targetHard, setTargetHard] = useLocal("targetHardness", "7,0");
-            const [mode, setMode] = useLocal("mixMode", "total"); // "total" | "fixedLW"
-            const [totalVol, setTotalVol] = useLocal("totalVolume", "2,50"); // L
-            const [lwVol, setLwVol] = useLocal("lwVolume", "1,00"); // L
-            const [priceLW, setPriceLW] = useLocal("priceLW", "0,00"); // €/L
-            const [priceMW, setPriceMW] = useLocal("priceMW", "0,50"); // €/L
+      function formatNum(n, digits = 2) {
+        if (!isFinite(n)) return "–";
+        return new Intl.NumberFormat("de-DE", { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(n);
+      }
 
-            // Hardness calculator inputs (persisted) – getrennt für LW & MW
-            const [caLW, setCaLW] = useLocal("calcCaLW", "99,1");
-            const [mgLW, setMgLW] = useLocal("calcMgLW", "22,4");
-            const [caMW, setCaMW] = useLocal("calcCaMW", "4,2");
-            const [mgMW, setMgMW] = useLocal("calcMgMW", "1,2");
+      function useLocal(key, initial) {
+        const [val, setVal] = useState(() => {
+          try {
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : initial;
+          } catch { return initial; }
+        });
+        useEffect(() => {
+          try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+        }, [key, val]);
+        return [val, setVal];
+      }
 
-            // Derived numbers (mixing)
-            const lw = parseNum(lwHard);
-            const mw = parseNum(mwHard);
-            const tgt = parseNum(targetHard);
-            const Vtot = parseNum(totalVol);
-            const Vlw = parseNum(lwVol);
-            const pLW = parseNum(priceLW);
-            const pMW = parseNum(priceMW);
+      // ===== App =====
+      function App() {
+        // Persisted inputs (Mischrechner)
+        const [lwHard, setLwHard] = useLocal("lwHardness", "16,6"); // °dH
+        const [mwHard, setMwHard] = useLocal("mwHardness", "0,8");  // °dH
+        const [targetHard, setTargetHard] = useLocal("targetHardness", "7,0");
+        const [mode, setMode] = useLocal("mixMode", "total"); // "total" | "fixedLW"
+        const [totalVol, setTotalVol] = useLocal("totalVolume", "2,50"); // L
+        const [lwVol, setLwVol] = useLocal("lwVolume", "1,00"); // L
+        const [priceLW, setPriceLW] = useLocal("priceLW", "0,00"); // €/L
+        const [priceMW, setPriceMW] = useLocal("priceMW", "0,50"); // €/L
 
-            // Härte aus Ca & Mg (°dH ≈ Ca/7,14 + Mg/4,34)
-            const dHLW = useMemo(() => {
-                const ca = parseNum(caLW), mg = parseNum(mgLW);
-                if (!isFinite(ca) || !isFinite(mg)) return NaN;
-                return ca / 7.14 + mg / 4.34;
-            }, [caLW, mgLW]);
+        // Härte-Rechner Startwerte Leitungswasser: Ca 69,6 mg/L; Mg 11,9 mg/L
+        const [caLW, setCaLW] = useLocal("calcCaLW", "69,6");
+        const [mgLW, setMgLW] = useLocal("calcMgLW", "11,9");
+        const [caMW, setCaMW] = useLocal("calcCaMW", "4,2");
+        const [mgMW, setMgMW] = useLocal("calcMgMW", "1,2");
 
-            const dHMW = useMemo(() => {
-                const ca = parseNum(caMW), mg = parseNum(mgMW);
-                if (!isFinite(ca) || !isFinite(mg)) return NaN;
-                return ca / 7.14 + mg / 4.34;
-            }, [caMW, mgMW]);
+        // Mineralwasser-Profile (mit Quelle)
+        const [mwProfiles, setMwProfiles] = useLocal("mwProfiles@v1", []);
+        const [selectedId, setSelectedId] = useState("");
 
-            // Mischung rechnen
-            const calc = useMemo(() => {
-                const warn = [];
-                if (!isFinite(lw) || !isFinite(mw) || !isFinite(tgt)) {
-                    warn.push("Bitte gültige Härten (°dH) eingeben.");
-                    return { vLW: NaN, vMW: NaN, total: NaN, cost: NaN, warn };
-                }
-                if (lw === mw) warn.push("LW- und MW-Härte sind identisch – Mischung ändert die Härte nicht.");
-                const between = tgt >= Math.min(lw, mw) && tgt <= Math.max(lw, mw);
-                if (!between) warn.push("Zielhärte liegt außerhalb der Spanne von LW/MW – Ergebnis ist eine Extrapolation.");
+        // Derived numbers
+        const lw = parseNum(lwHard);
+        const mw = parseNum(mwHard);
+        const tgt = parseNum(targetHard);
+        const Vtot = parseNum(totalVol);
+        const Vlw = parseNum(lwVol);
+        const pLW = parseNum(priceLW);
+        const pMW = parseNum(priceMW);
 
-                if (mode === "total") {
-                    if (!isFinite(Vtot) || Vtot <= 0) {
-                        warn.push("Bitte eine gültige Gesamtmenge (L) eingeben.");
-                        return { vLW: NaN, vMW: NaN, total: NaN, cost: NaN, warn };
-                    }
-                    const denom = lw - mw; if (denom === 0) return { vLW: NaN, vMW: NaN, total: NaN, cost: NaN, warn };
-                    const fracLW = (tgt - mw) / denom;
-                    const vLW = fracLW * Vtot;
-                    const vMW = (1 - fracLW) * Vtot;
-                    const cost = vLW * pLW + vMW * pMW;
-                    return { vLW, vMW, total: Vtot, cost, warn };
-                } else {
-                    if (!isFinite(Vlw) || Vlw <= 0) {
-                        warn.push("Bitte eine gültige Menge Leitungswasser (L) eingeben.");
-                        return { vLW: NaN, vMW: NaN, total: NaN, cost: NaN, warn };
-                    }
-                    const denom = tgt - mw; if (denom === 0) return { vLW: Vlw, vMW: NaN, total: NaN, cost: NaN, warn };
-                    const vMW = Vlw * (lw - tgt) / denom; // y = x*(LW−Ziel)/(Ziel−MW)
-                    const total = Vlw + vMW;
-                    const cost = Vlw * pLW + vMW * pMW;
-                    return { vLW: Vlw, vMW, total, cost, warn };
-                }
-            }, [lw, mw, tgt, Vtot, Vlw, pLW, pMW, mode]);
+        // Härte aus Ca & Mg (°dH ≈ Ca/7,14 + Mg/4,34)
+        const toDHW = (ca, mg) => (parseNum(ca)/7.14 + parseNum(mg)/4.34);
+        const dHLW = useMemo(() => toDHW(caLW, mgLW), [caLW, mgLW]);
+        const dHMW = useMemo(() => toDHW(caMW, mgMW), [caMW, mgMW]);
 
-            function resetAll() {
-                setLwHard("16,6"); setMwHard("0,8"); setTargetHard("7,0");
-                setMode("total"); setTotalVol("2,50"); setLwVol("1,00");
-                setPriceLW("0,00"); setPriceMW("0,50");
-                setCaLW("99,1"); setMgLW("22,4"); setCaMW("4,2"); setMgMW("1,2");
-                try { localStorage.clear(); } catch { }
+        // Mischung rechnen
+        const calc = useMemo(() => {
+          const warn = [];
+          if (!isFinite(lw) || !isFinite(mw) || !isFinite(tgt)) {
+            warn.push("Bitte gültige Härten (°dH) eingeben.");
+            return { vLW: NaN, vMW: NaN, total: NaN, cost: NaN, warn };
+          }
+          if (lw === mw) warn.push("LW- und MW-Härte sind identisch – Mischung ändert die Härte nicht.");
+          const between = tgt >= Math.min(lw, mw) && tgt <= Math.max(lw, mw);
+          if (!between) warn.push("Zielhärte liegt außerhalb der Spanne von LW/MW – Ergebnis ist eine Extrapolation.");
+
+          if (mode === "total") {
+            if (!isFinite(Vtot) || Vtot <= 0) {
+              warn.push("Bitte eine gültige Gesamtmenge (L) eingeben.");
+              return { vLW: NaN, vMW: NaN, total: NaN, cost: NaN, warn };
             }
+            const denom = (lw - mw);
+            if (denom === 0) return { vLW: NaN, vMW: NaN, total: NaN, cost: NaN, warn };
+            const fracLW = (tgt - mw) / denom;
+            const vLW = fracLW * Vtot;
+            const vMW = (1 - fracLW) * Vtot;
+            const cost = vLW * pLW + vMW * pMW;
+            return { vLW, vMW, total: Vtot, cost, warn };
+          } else {
+            if (!isFinite(Vlw) || Vlw <= 0) {
+              warn.push("Bitte eine gültige Menge Leitungswasser (L) eingeben.");
+              return { vLW: NaN, vMW: NaN, total: NaN, cost: NaN, warn };
+            }
+            const denom = (tgt - mw);
+            if (denom === 0) return { vLW: Vlw, vMW: NaN, total: NaN, cost: NaN, warn };
+            const vMW = Vlw * (lw - tgt) / denom;
+            const total = Vlw + vMW;
+            const cost = Vlw * pLW + vMW * pMW;
+            return { vLW: Vlw, vMW, total, cost, warn };
+          }
+        }, [lw, mw, tgt, Vtot, Vlw, pLW, pMW, mode]);
 
-            return (
-                <div className="min-h-screen bg-gray-50 text-gray-900 p-6">
-                    <div className="max-w-5xl mx-auto space-y-6">
-                        <header className="flex items-center justify-between">
-                            <h1 className="text-2xl font-bold">Wasserhärte-Mischer</h1>
-                            <button onClick={resetAll} className="px-3 py-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm">Zurücksetzen</button>
-                        </header>
-
-                        {/* Härte-Rechner – Leitungswasser */}
-                        <div className="bg-white p-4 rounded-2xl shadow-sm">
-                            <h2 className="font-semibold mb-3">Härte-Rechner – Leitungswasser</h2>
-                            <div className="grid md:grid-cols-4 gap-4 items-end">
-                                <div>
-                                    <label className="block text-sm mb-1">Calcium (mg/L)</label>
-                                    <input value={caLW} onChange={e => setCaLW(e.target.value)} className="w-full p-2 rounded-xl border" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm mb-1">Magnesium (mg/L)</label>
-                                    <input value={mgLW} onChange={e => setMgLW(e.target.value)} className="w-full p-2 rounded-xl border" />
-                                </div>
-                                <div className="p-3 rounded-xl bg-gray-100">
-                                    <div className="text-sm text-gray-600">Härte Leitungswasser</div>
-                                    <div className="text-2xl font-semibold">{formatNum(dHLW, 2)} °dH</div>
-                                </div>
-                                <div className="flex gap-2">
-                                    <button onClick={() => setLwHard(formatNum(dHLW, 2))} className="px-3 py-2 rounded-xl border bg-gray-900 text-white w-full">
-                                        In Mischrechner übernehmen
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Härte-Rechner – Mineralwasser */}
-                        <div className="bg-white p-4 rounded-2xl shadow-sm">
-                            <h2 className="font-semibold mb-3">Härte-Rechner – Mineralwasser</h2>
-                            <div className="grid md:grid-cols-4 gap-4 items-end">
-                                <div>
-                                    <label className="block text-sm mb-1">Calcium (mg/L)</label>
-                                    <input value={caMW} onChange={e => setCaMW(e.target.value)} className="w-full p-2 rounded-xl border" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm mb-1">Magnesium (mg/L)</label>
-                                    <input value={mgMW} onChange={e => setMgMW(e.target.value)} className="w-full p-2 rounded-xl border" />
-                                </div>
-                                <div className="p-3 rounded-xl bg-gray-100">
-                                    <div className="text-sm text-gray-600">Härte Mineralwasser</div>
-                                    <div className="text-2xl font-semibold">{formatNum(dHMW, 2)} °dH</div>
-                                </div>
-                                <div className="flex gap-2">
-                                    <button onClick={() => setMwHard(formatNum(dHMW, 2))} className="px-3 py-2 rounded-xl border bg-gray-900 text-white w-full">
-                                        In Mischrechner übernehmen
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Mischrechner – Eingaben & Preise */}
-                        <div className="grid md:grid-cols-3 gap-4">
-                            {/* Härten für den Mischrechner */}
-                            <div className="bg-white p-4 rounded-2xl shadow-sm">
-                                <h2 className="font-semibold mb-3">Mischrechner – Härte (°dH)</h2>
-                                <label className="block text-sm mb-1">Leitungswasser</label>
-                                <input value={lwHard} onChange={e => setLwHard(e.target.value)} className="w-full p-2 rounded-xl border mb-3" placeholder="z. B. 16,6" />
-                                <label className="block text-sm mb-1">Mineralwasser</label>
-                                <input value={mwHard} onChange={e => setMwHard(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="z. B. 0,8" />
-                                <div className="text-xs text-gray-500 mt-2">Tipp: Oben berechnen und hier übernehmen.</div>
-                            </div>
-
-                            {/* Mischmodus & Ziel */}
-                            <div className="bg-white p-4 rounded-2xl shadow-sm">
-                                <h2 className="font-semibold mb-3">Mischmodus & Ziel</h2>
-                                <div className="flex gap-2 mb-4">
-                                    <button onClick={() => setMode("total")} className={`px-3 py-2 rounded-xl border ${mode === 'total' ? 'bg-gray-900 text-white' : 'bg-white'}`}>Gesamtmenge</button>
-                                    <button onClick={() => setMode("fixedLW")} className={`px-3 py-2 rounded-xl border ${mode === 'fixedLW' ? 'bg-gray-900 text-white' : 'bg-white'}`}>x L Leitungswasser</button>
-                                </div>
-                                {mode === 'total' ? (
-                                    <>
-                                        <label className="block text-sm mb-1">Gesamtmenge (L)</label>
-                                        <input value={totalVol} onChange={e => setTotalVol(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="z. B. 2,50" />
-                                    </>
-                                ) : (
-                                    <>
-                                        <label className="block text-sm mb-1">Leitungswasser (L)</label>
-                                        <input value={lwVol} onChange={e => setLwVol(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="z. B. 1,00" />
-                                    </>
-                                )}
-                                <label className="block text-sm mt-3 mb-1">Zielhärte (°dH)</label>
-                                <input value={targetHard} onChange={e => setTargetHard(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="z. B. 7,0" />
-                            </div>
-
-                            {/* Preise */}
-                            <div className="bg-white p-4 rounded-2xl shadow-sm">
-                                <h2 className="font-semibold mb-3">Preise (optional)</h2>
-                                <label className="block text-sm mb-1">Preis Leitungswasser (€/L)</label>
-                                <input value={priceLW} onChange={e => setPriceLW(e.target.value)} className="w-full mb-3 p-2 rounded-xl border" placeholder="0,00" />
-                                <label className="block text-sm mb-1">Preis Mineralwasser (€/L)</label>
-                                <input value={priceMW} onChange={e => setPriceMW(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="0,50" />
-                            </div>
-                        </div>
-
-                        {/* Ergebnis */}
-                        <div className="bg-white p-4 rounded-2xl shadow-sm">
-                            <h2 className="font-semibold mb-3">Ergebnis</h2>
-                            <div className="grid md:grid-cols-4 gap-4">
-                                <div className="p-3 rounded-xl bg-gray-100">
-                                    <div className="text-sm text-gray-600">Leitungswasser</div>
-                                    <div className="text-2xl font-semibold">{formatNum(calc.vLW)} L</div>
-                                </div>
-                                <div className="p-3 rounded-xl bg-gray-100">
-                                    <div className="text-sm text-gray-600">Mineralwasser</div>
-                                    <div className="text-2xl font-semibold">{formatNum(calc.vMW)} L</div>
-                                </div>
-                                <div className="p-3 rounded-xl bg-gray-100">
-                                    <div className="text-sm text-gray-600">Gesamt</div>
-                                    <div className="text-2xl font-semibold">{formatNum(calc.total)} L</div>
-                                </div>
-                                <div className="p-3 rounded-xl bg-gray-100">
-                                    <div className="text-sm text-gray-600">Kosten</div>
-                                    <div className="text-2xl font-semibold">
-                                        {isFinite(calc.cost) ? `${formatNum(calc.cost)} € (${formatNum(calc.cost / calc.total)} €/L)` : "–"}
-                                    </div>
-                                </div>
-                            </div>
-                            {calc.warn.length > 0 && (
-                                <ul className="mt-4 text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded-xl p-3 list-disc list-inside">
-                                    {calc.warn.map((w, i) => (<li key={i}>{w}</li>))}
-                                </ul>
-                            )}
-                            <div className="text-xs text-gray-500 mt-2">
-                                Formel (Gesamtmenge): Anteil LW = (Ziel − MW) / (LW − MW); Anteil MW = 1 − Anteil LW. <br />
-                                Formel (x L LW): MW = LW_Menge · (LW − Ziel) / (Ziel − MW).
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
+        function resetAll() {
+          // Set defaults + localStorage leeren
+          try { localStorage.clear(); } catch {}
+          setLwHard("16,6"); setMwHard("0,8"); setTargetHard("7,0");
+          setMode("total"); setTotalVol("2,50"); setLwVol("1,00");
+          setPriceLW("0,00"); setPriceMW("0,50");
+          setCaLW("69,6"); setMgLW("11,9"); setCaMW("4,2"); setMgMW("1,2");
+          setSelectedId("");
         }
 
-        const root = ReactDOM.createRoot(document.getElementById("root"));
-        root.render(<App />);
-    </script>
-</body>
+        // ===== Profile Helpers =====
+        function addProfile(data) {
+          const name = String(data.name || "").trim();
+          if (!name) { alert("Name ist erforderlich."); return; }
+          if (mwProfiles.some(p => String(p.name).toLowerCase() === name.toLowerCase())) {
+            alert("Diesen Profilnamen gibt es bereits."); return;
+          }
+          const prof = {
+            id: "mw_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+            name,
+            ca: parseNum(data.ca),
+            mg: parseNum(data.mg),
+            price: data.price != null && String(data.price) !== "" ? parseNum(data.price) : undefined,
+            source: data.source && String(data.source).trim() !== "" ? String(data.source).trim() : undefined,
+            createdAt: new Date().toISOString(),
+            isDefault: false,
+          };
+          setMwProfiles([prof, ...mwProfiles].slice(0, 100));
+        }
 
+        function updateProfile(id, patch) {
+          setMwProfiles(mwProfiles.map(p => p.id === id ? { ...p, ...patch } : p));
+        }
+
+        function deleteProfile(id) {
+          if (!confirm("Profil wirklich löschen?")) return;
+          setMwProfiles(mwProfiles.filter(p => p.id !== id));
+          if (selectedId === id) setSelectedId("");
+        }
+
+        function setDefaultProfile(id) {
+          setMwProfiles(mwProfiles.map(p => ({ ...p, isDefault: p.id === id })));
+        }
+
+        // Beim ersten Laden Standard-Profil automatisch in Mischrechner übernehmen
+        useEffect(() => {
+          const def = mwProfiles.find(p => p.isDefault);
+          if (def) {
+            const dh = toDHW(def.ca, def.mg);
+            setMwHard(new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(dh));
+            if (def.price != null) setPriceMW(new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(def.price));
+          }
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, []);
+
+        // Inline Editor-Komponente für Profile
+        function ProfileEditor({ title, initial, onSave, onDelete, onMakeDefault }) {
+          const [name, setName] = useState(initial?.name || "");
+          const [ca, setCa] = useState(initial?.ca != null ? String(initial.ca).replace(".", ",") : "");
+          const [mg, setMg] = useState(initial?.mg != null ? String(initial.mg).replace(".", ",") : "");
+          const [price, setPrice] = useState(initial?.price != null ? String(initial.price).replace(".", ",") : "");
+          const [source, setSource] = useState(initial?.source || "");
+
+          const dH = toDHW(ca, mg);
+
+          return (
+            <div className="p-3 rounded-2xl border bg-gray-50">
+              <div className="font-semibold mb-2">{title}</div>
+              <div className="grid md:grid-cols-2 gap-2">
+                <input className="p-2 rounded-xl border" placeholder="Name"
+                       value={name} onChange={e=>setName(e.target.value)} />
+                <input className="p-2 rounded-xl border" placeholder="Preis €/L (optional)"
+                       value={price} onChange={e=>setPrice(e.target.value)} />
+                <input className="p-2 rounded-xl border" placeholder="Calcium mg/L"
+                       value={ca} onChange={e=>setCa(e.target.value)} />
+                <input className="p-2 rounded-xl border" placeholder="Magnesium mg/L"
+                       value={mg} onChange={e=>setMg(e.target.value)} />
+                <input className="p-2 rounded-xl border md:col-span-2" placeholder="Quelle (Etikett / Analyse / URL)"
+                       value={source} onChange={e=>setSource(e.target.value)} />
+              </div>
+              <div className="text-sm text-gray-600 mt-2">
+                Vorschau Härte: <b>{isFinite(dH) ? dH.toFixed(2) : "–"} °dH</b>
+                {source ? <span className="ml-2 text-gray-500">• Quelle: {source}</span> : null}
+              </div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                <button className="px-3 py-2 rounded-xl border bg-gray-900 text-white"
+                        onClick={()=>onSave({ name, ca, mg, price, source })}>
+                  Speichern
+                </button>
+                {onMakeDefault && (
+                  <button className="px-3 py-2 rounded-xl border" onClick={onMakeDefault}>⭐ Als Standard</button>
+                )}
+                {onDelete && (
+                  <button className="px-3 py-2 rounded-xl border" onClick={onDelete}>Löschen</button>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div className="min-h-screen bg-gray-50 text-gray-900 p-6">
+            <div className="max-w-6xl mx-auto space-y-6">
+              <header className="flex items-center justify-between">
+                <h1 className="text-2xl font-bold">Wasserhärte-Mischer</h1>
+                <button onClick={resetAll} className="px-3 py-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm">Zurücksetzen</button>
+              </header>
+
+              {/* Härte-Rechner – Leitungswasser */}
+              <div className="bg-white p-4 rounded-2xl shadow-sm">
+                <h2 className="font-semibold mb-3">Härte-Rechner – Leitungswasser</h2>
+                <div className="grid md:grid-cols-4 gap-4 items-end">
+                  <div>
+                    <label className="block text-sm mb-1">Calcium (mg/L)</label>
+                    <input value={caLW} onChange={e=>setCaLW(e.target.value)} className="w-full p-2 rounded-xl border" />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Magnesium (mg/L)</label>
+                    <input value={mgLW} onChange={e=>setMgLW(e.target.value)} className="w-full p-2 rounded-xl border" />
+                  </div>
+                  <div className="p-3 rounded-2xl bg-gray-100">
+                    <div className="text-sm text-gray-600">Härte Leitungswasser</div>
+                    <div className="text-2xl font-semibold">{formatNum(dHLW, 2)} °dH</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={()=>setLwHard(formatNum(dHLW, 2))}
+                            className="px-3 py-2 rounded-xl border bg-gray-900 text-white w-full">
+                      In Mischrechner übernehmen
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Härte-Rechner – Mineralwasser */}
+              <div className="bg-white p-4 rounded-2xl shadow-sm">
+                <h2 className="font-semibold mb-3">Härte-Rechner – Mineralwasser</h2>
+                <div className="grid md:grid-cols-4 gap-4 items-end">
+                  <div>
+                    <label className="block text-sm mb-1">Calcium (mg/L)</label>
+                    <input value={caMW} onChange={e=>setCaMW(e.target.value)} className="w-full p-2 rounded-xl border" />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Magnesium (mg/L)</label>
+                    <input value={mgMW} onChange={e=>setMgMW(e.target.value)} className="w-full p-2 rounded-xl border" />
+                  </div>
+                  <div className="p-3 rounded-2xl bg-gray-100">
+                    <div className="text-sm text-gray-600">Härte Mineralwasser</div>
+                    <div className="text-2xl font-semibold">{formatNum(dHMW, 2)} °dH</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={()=>setMwHard(formatNum(dHMW, 2))}
+                            className="px-3 py-2 rounded-xl border bg-gray-900 text-white w-full">
+                      In Mischrechner übernehmen
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mineralwasser-Profile (mit Quelle) */}
+              <div className="bg-white p-4 rounded-2xl shadow-sm">
+                <h2 className="font-semibold mb-3">Mineralwasser-Profile</h2>
+
+                <div className="flex flex-col md:flex-row gap-2 mb-3">
+                  <select className="flex-1 p-2 rounded-xl border" value={selectedId} onChange={e=>setSelectedId(e.target.value)}>
+                    <option value="">– Profil wählen –</option>
+                    {mwProfiles.map(p => {
+                      const label = (p.isDefault ? "⭐ " : "") +
+                                    p.name +
+                                    " · " + toDHW(p.ca, p.mg).toFixed(1) + " °dH" +
+                                    (p.source ? " · " + p.source : "");
+                      return <option key={p.id} value={p.id}>{label}</option>;
+                    })}
+                  </select>
+
+                  <button className="px-3 py-2 rounded-xl border"
+                          onClick={()=>{
+                            const p = mwProfiles.find(x=>x.id===selectedId); if(!p) return;
+                            setCaMW(String(p.ca).replace(".", ","));
+                            setMgMW(String(p.mg).replace(".", ","));
+                          }}>
+                    → In Härte-Rechner
+                  </button>
+
+                  <button className="px-3 py-2 rounded-xl border"
+                          onClick={()=>{
+                            const p = mwProfiles.find(x=>x.id===selectedId); if(!p) return;
+                            const dh = toDHW(p.ca, p.mg);
+                            setMwHard(new Intl.NumberFormat("de-DE",{maximumFractionDigits:2,minimumFractionDigits:2}).format(dh));
+                            if (p.price != null) setPriceMW(new Intl.NumberFormat("de-DE",{maximumFractionDigits:2,minimumFractionDigits:2}).format(p.price));
+                          }}>
+                    → In Mischrechner
+                  </button>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-3">
+                  <ProfileEditor title="Neues Profil" onSave={(d)=>addProfile(d)} />
+
+                  {selectedId && (
+                    <ProfileEditor
+                      title="Profil bearbeiten"
+                      initial={mwProfiles.find(p=>p.id===selectedId)}
+                      onSave={(d)=>updateProfile(selectedId, {
+                        name: d.name?.trim(),
+                        ca: parseNum(d.ca),
+                        mg: parseNum(d.mg),
+                        price: d.price !== "" && d.price != null ? parseNum(d.price) : undefined,
+                        source: d.source && String(d.source).trim() !== "" ? String(d.source).trim() : undefined,
+                      })}
+                      onDelete={()=>deleteProfile(selectedId)}
+                      onMakeDefault={()=>setDefaultProfile(selectedId)}
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button className="px-3 py-2 rounded-xl border"
+                          onClick={()=>{
+                            const blob = new Blob([JSON.stringify(mwProfiles,null,2)], {type:"application/json"});
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url; a.download = "mw_profiles.json"; a.click();
+                            URL.revokeObjectURL(url);
+                          }}>
+                    Exportieren (JSON)
+                  </button>
+
+                  <label className="px-3 py-2 rounded-xl border cursor-pointer">
+                    Importieren (JSON)
+                    <input type="file" accept="application/json" hidden
+                           onChange={async (e)=>{
+                             const file = e.target.files?.[0]; if(!file) return;
+                             const txt = await file.text();
+                             try {
+                               const arr = JSON.parse(txt);
+                               if (!Array.isArray(arr)) throw new Error("Format");
+                               const cleaned = arr.map(o=>({
+                                 id: o.id || "mw_"+Math.random().toString(36).slice(2),
+                                 name: String(o.name||"").trim(),
+                                 ca: Number(o.ca)||0,
+                                 mg: Number(o.mg)||0,
+                                 price: o.price != null ? Number(o.price) : undefined,
+                                 source: o.source ? String(o.source) : undefined,
+                                 createdAt: o.createdAt || new Date().toISOString(),
+                                 isDefault: !!o.isDefault
+                               })).filter(o=>o.name);
+                               // Merge mit Namens-Konfliktlösung
+                               const existingNames = new Set(mwProfiles.map(p=>String(p.name).toLowerCase()));
+                               const merged = [
+                                 ...mwProfiles,
+                                 ...cleaned.map(p=>{
+                                   if (existingNames.has(p.name.toLowerCase())) p.name = p.name + " (import)";
+                                   return p;
+                                 })
+                               ].slice(0,100);
+                               setMwProfiles(merged);
+                               alert("Import erfolgreich.");
+                             } catch {
+                               alert("Import fehlgeschlagen. Prüfe die JSON-Datei.");
+                             }
+                           }}/>
+                  </label>
+                </div>
+              </div>
+
+              {/* Mischrechner – Eingaben & Preise */}
+              <div className="grid md:grid-cols-3 gap-4">
+                {/* Härten für den Mischrechner */}
+                <div className="bg-white p-4 rounded-2xl shadow-sm">
+                  <h2 className="font-semibold mb-3">Mischrechner – Härte (°dH)</h2>
+                  <label className="block text-sm mb-1">Leitungswasser</label>
+                  <input value={lwHard} onChange={e=>setLwHard(e.target.value)} className="w-full p-2 rounded-xl border mb-3" placeholder="z. B. 16,6" />
+                  <label className="block text-sm mb-1">Mineralwasser</label>
+                  <input value={mwHard} onChange={e=>setMwHard(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="z. B. 0,8" />
+                  <div className="text-xs text-gray-500 mt-2">Tipp: Oben berechnen und hier übernehmen.</div>
+                </div>
+
+                {/* Mischmodus & Ziel */}
+                <div className="bg-white p-4 rounded-2xl shadow-sm">
+                  <h2 className="font-semibold mb-3">Mischmodus & Ziel</h2>
+                  <div className="flex gap-2 mb-4">
+                    <button onClick={()=>setMode("total")} className={`px-3 py-2 rounded-xl border ${mode==='total' ? 'bg-gray-900 text-white' : 'bg-white'}`}>Gesamtmenge</button>
+                    <button onClick={()=>setMode("fixedLW")} className={`px-3 py-2 rounded-xl border ${mode==='fixedLW' ? 'bg-gray-900 text-white' : 'bg-white'}`}>x L Leitungswasser</button>
+                  </div>
+                  {mode === 'total' ? (
+                    <>
+                      <label className="block text-sm mb-1">Gesamtmenge (L)</label>
+                      <input value={totalVol} onChange={e=>setTotalVol(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="z. B. 2,50" />
+                    </>
+                  ) : (
+                    <>
+                      <label className="block text-sm mb-1">Leitungswasser (L)</label>
+                      <input value={lwVol} onChange={e=>setLwVol(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="z. B. 1,00" />
+                    </>
+                  )}
+                  <label className="block text-sm mt-3 mb-1">Zielhärte (°dH)</label>
+                  <input value={targetHard} onChange={e=>setTargetHard(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="z. B. 7,0" />
+                </div>
+
+                {/* Preise */}
+                <div className="bg-white p-4 rounded-2xl shadow-sm">
+                  <h2 className="font-semibold mb-3">Preise (optional)</h2>
+                  <label className="block text-sm mb-1">Preis Leitungswasser (€/L)</label>
+                  <input value={priceLW} onChange={e=>setPriceLW(e.target.value)} className="w-full mb-3 p-2 rounded-xl border" placeholder="0,00" />
+                  <label className="block text-sm mb-1">Preis Mineralwasser (€/L)</label>
+                  <input value={priceMW} onChange={e=>setPriceMW(e.target.value)} className="w-full p-2 rounded-xl border" placeholder="0,50" />
+                </div>
+              </div>
+
+              {/* Ergebnis */}
+              <div className="bg-white p-4 rounded-2xl shadow-sm">
+                <h2 className="font-semibold mb-3">Ergebnis</h2>
+                <div className="grid md:grid-cols-4 gap-4">
+                  <div className="p-3 rounded-2xl bg-gray-100">
+                    <div className="text-sm text-gray-600">Leitungswasser</div>
+                    <div className="text-2xl font-semibold">{formatNum(calc.vLW)} L</div>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-gray-100">
+                    <div className="text-sm text-gray-600">Mineralwasser</div>
+                    <div className="text-2xl font-semibold">{formatNum(calc.vMW)} L</div>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-gray-100">
+                    <div className="text-sm text-gray-600">Gesamt</div>
+                    <div className="text-2xl font-semibold">{formatNum(calc.total)} L</div>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-gray-100">
+                    <div className="text-sm text-gray-600">Kosten</div>
+                    <div className="text-2xl font-semibold">
+                      {isFinite(calc.cost) ? `${formatNum(calc.cost)} € (${formatNum(calc.cost / calc.total)} €/L)` : "–"}
+                    </div>
+                  </div>
+                </div>
+                {calc.warn.length > 0 && (
+                  <ul className="mt-4 text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded-2xl p-3 list-disc list-inside">
+                    {calc.warn.map((w, i) => (<li key={i}>{w}</li>))}
+                  </ul>
+                )}
+                <div className="text-xs text-gray-500 mt-2">
+                  Formel (Gesamtmenge): Anteil LW = (Ziel − MW) / (LW − MW); Anteil MW = 1 − Anteil LW. <br />
+                  Formel (x L LW): MW = LW_Menge · (LW − Ziel) / (Ziel − MW).
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<App />);
+    </script>
+  </body>
 </html>
